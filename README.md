@@ -46,15 +46,7 @@ Forest fires cause massive ecological and economic damage. This project presents
 ## 🏗️ Architecture
 
 
-Input (224x224x3 RGB Image)
-↓
-Pretrained MobileNetV2 (ImageNet)
-↓
-GlobalAveragePooling2D
-↓
-Dense(1024, ReLU)
-↓
-Dense(2, Softmax)
+Input (224x224x3 RGB Image) => Pretrained MobileNetV2 (ImageNet) => GlobalAveragePooling2D => Dense(1024, ReLU) => Dense(2, Softmax)
 
 ![image](https://github.com/user-attachments/assets/53964d12-1d81-4e55-b5a6-062ec1777525)
 
