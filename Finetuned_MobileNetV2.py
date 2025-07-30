@@ -1,10 +1,17 @@
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
+# 1. Import Important Libraries
 import tensorflow as tf
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.applications import MobileNetV2
 from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Conv2D, MaxPooling2D, GlobalAveragePooling2D, Dense, Input
+from tensorflow.keras.layers import GlobalAveragePooling2D, Dense, Dropout
 import matplotlib.pyplot as plt
 
-# Data augmentation
+# 2. Load Dataset
+train_dir = '/kaggle/input/the-wildfire-dataset/the_wildfire_dataset_2n_version/train'
+val_dir = '/kaggle/input/the-wildfire-dataset/the_wildfire_dataset_2n_version/val'
+test_dir = '/kaggle/input/the-wildfire-dataset/the_wildfire_dataset_2n_version/test'
+
+# 3. Data Augmentations
 train_datagen = ImageDataGenerator(
     rescale=1./255,
     rotation_range=20,
@@ -17,201 +24,110 @@ train_datagen = ImageDataGenerator(
 
 val_test_datagen = ImageDataGenerator(rescale=1./255)
 
-# Load dataset
 train_data = train_datagen.flow_from_directory(
-    '/kaggle/input/the-wildfire-dataset/the_wildfire_dataset_2n_version/train',
+    train_dir,
     target_size=(224, 224),
     batch_size=32,
     class_mode='categorical'
 )
 
-validation_data = val_test_datagen.flow_from_directory(
-    '/kaggle/input/the-wildfire-dataset/the_wildfire_dataset_2n_version/val',
+val_data = val_test_datagen.flow_from_directory(
+    val_dir,
     target_size=(224, 224),
     batch_size=32,
     class_mode='categorical'
 )
 
 test_data = val_test_datagen.flow_from_directory(
-    '/kaggle/input/the-wildfire-dataset/the_wildfire_dataset_2n_version/test',
+    test_dir,
     target_size=(224, 224),
     batch_size=32,
     class_mode='categorical'
 )
 
-# SqueezeNet model
-def SqueezeNet(input_shape=(224, 224, 3), num_classes=1000):
-    inputs = Input(shape=input_shape)
-    
-    # Initial Conv Layer
-    x = Conv2D(64, (3, 3), activation='relu', padding='same')(inputs)
-    x = MaxPooling2D(pool_size=(2, 2))(x)
-    
-    # Fire Modules (Squeeze + Expand)
-    x = Conv2D(16, (1, 1), activation='relu')(x)
-    x = Conv2D(64, (3, 3), activation='relu', padding='same')(x)
-    x = MaxPooling2D(pool_size=(2, 2))(x)
-    
-    x = Conv2D(32, (1, 1), activation='relu')(x)
-    x = Conv2D(128, (3, 3), activation='relu', padding='same')(x)
-    x = GlobalAveragePooling2D()(x)
-    
-    # Output Layer
-    outputs = Dense(num_classes, activation='softmax')(x)
-    
-    return Model(inputs, outputs)
+# 4. Import Pretrained MobileNetV2 (exclude top layers)
+base_model = MobileNetV2(weights='imagenet', include_top=False, input_shape=(224, 224, 3))
 
-# Create Model
-model = SqueezeNet(input_shape=(224, 224, 3), num_classes=train_data.num_classes)
+# 5. Fine-Tune in 2 Phases
 
-# Compile the model
-model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001), 
-              loss='categorical_crossentropy', 
-              metrics=['accuracy'])
+## --- Phase 1: Freeze first 100 layers, train top classification head ---
+for layer in base_model.layers[:100]:
+    layer.trainable = False
+for layer in base_model.layers[100:]:
+    layer.trainable = True
 
-# Train model
-history = model.fit(
+x = base_model.output
+x = GlobalAveragePooling2D()(x)
+x = Dense(1024, activation='relu')(x)
+x = Dropout(0.5)(x)
+predictions = Dense(train_data.num_classes, activation='softmax')(x)
+
+model = Model(inputs=base_model.input, outputs=predictions)
+
+model.compile(
+    optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+    loss='categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+print("Training Phase 1: Frozen first 100 layers")
+history1 = model.fit(
     train_data,
     epochs=10,
-    validation_data=validation_data,
-    batch_size=32,
+    validation_data=val_data,
     verbose=1
 )
 
-# Plot training results
-plt.figure(figsize=(12, 4))
+## --- Phase 2: Unfreeze all layers, retrain at lower learning rate ---
+for layer in model.layers:
+    layer.trainable = True
 
-plt.subplot(1, 2, 1)
-plt.plot(history.history['accuracy'], label='train_accuracy')
-plt.plot(history.history['val_accuracy'], label='val_accuracy')
-plt.title('Accuracy')
-plt.xlabel('Epochs')
-plt.ylabel('Accuracy')
-plt.legend()
-
-plt.subplot(1, 2, 2)
-plt.plot(history.history['loss'], label='train_loss')
-plt.plot(history.history['val_loss'], label='val_loss')
-plt.title('Loss')
-plt.xlabel('Epochs')
-plt.ylabel('Loss')
-plt.legend()
-
-plt.show()
-
-# Evaluate model
-test_loss, test_acc = model.evaluate(test_data)
-print(f'Test accuracy: {test_acc}')
-
-
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
-import tensorflow as tf
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Conv2D, MaxPooling2D, GlobalAveragePooling2D, Dense, Input, DepthwiseConv2D, BatchNormalization, ReLU, Add
-import matplotlib.pyplot as plt
-
-# Data augmentation
-train_datagen = ImageDataGenerator(
-    rescale=1./255,
-    rotation_range=20,
-    width_shift_range=0.2,
-    height_shift_range=0.2,
-    shear_range=0.2,
-    zoom_range=0.2,
-    horizontal_flip=True
+model.compile(
+    optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001),
+    loss='categorical_crossentropy',
+    metrics=['accuracy']
 )
 
-val_test_datagen = ImageDataGenerator(rescale=1./255)
-
-# Load dataset
-train_data = train_datagen.flow_from_directory(
-    '/kaggle/input/the-wildfire-dataset/the_wildfire_dataset_2n_version/train',
-    target_size=(224, 224),
-    batch_size=32,
-    class_mode='categorical'
-)
-
-validation_data = val_test_datagen.flow_from_directory(
-    '/kaggle/input/the-wildfire-dataset/the_wildfire_dataset_2n_version/val',
-    target_size=(224, 224),
-    batch_size=32,
-    class_mode='categorical'
-)
-
-test_data = val_test_datagen.flow_from_directory(
-    '/kaggle/input/the-wildfire-dataset/the_wildfire_dataset_2n_version/test',
-    target_size=(224, 224),
-    batch_size=32,
-    class_mode='categorical'
-)
-
-# ShuffleNet model
-def ShuffleNet(input_shape=(224, 224, 3), num_classes=1000):
-    inputs = Input(shape=input_shape)
-    
-    # Initial Conv Layer
-    x = Conv2D(64, (3, 3), strides=2, activation='relu', padding='same')(inputs)
-    x = MaxPooling2D(pool_size=(3, 3), strides=2, padding='same')(x)
-    
-    # ShuffleNet Block
-    def shuffle_unit(x, out_channels):
-        branch = x
-        x = DepthwiseConv2D(kernel_size=3, padding='same', depth_multiplier=1)(x)
-        x = BatchNormalization()(x)
-        x = ReLU()(x)
-        x = Conv2D(out_channels, (1, 1), activation='relu', padding='same')(x)
-        x = BatchNormalization()(x)
-        x = Add()([x, branch])
-        return x
-    
-    x = shuffle_unit(x, 128)
-    x = shuffle_unit(x, 256)
-    x = shuffle_unit(x, 512)
-    x = GlobalAveragePooling2D()(x)
-    
-    # Output Layer
-    outputs = Dense(num_classes, activation='softmax')(x)
-    
-    return Model(inputs, outputs)
-
-# Create Model
-model = ShuffleNet(input_shape=(224, 224, 3), num_classes=train_data.num_classes)
-
-# Compile the model
-model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001), 
-              loss='categorical_crossentropy', 
-              metrics=['accuracy'])
-
-# Train model
-history = model.fit(
+print("Training Phase 2: Fine-tuning all layers")
+history2 = model.fit(
     train_data,
     epochs=10,
-    validation_data=validation_data,
-    batch_size=32,
+    validation_data=val_data,
     verbose=1
 )
 
-# Plot training results
-plt.figure(figsize=(12, 4))
+# 6. Results & Plots
+def plot_history(history1, history2):
+    acc = history1.history['accuracy'] + history2.history['accuracy']
+    val_acc = history1.history['val_accuracy'] + history2.history['val_accuracy']
+    loss = history1.history['loss'] + history2.history['loss']
+    val_loss = history1.history['val_loss'] + history2.history['val_loss']
+    epochs = range(1, len(acc) + 1)
 
-plt.subplot(1, 2, 1)
-plt.plot(history.history['accuracy'], label='train_accuracy')
-plt.plot(history.history['val_accuracy'], label='val_accuracy')
-plt.title('Accuracy')
-plt.xlabel('Epochs')
-plt.ylabel('Accuracy')
-plt.legend()
+    plt.figure(figsize=(12, 4))
+    
+    plt.subplot(1, 2, 1)
+    plt.plot(epochs, acc, label='Train Accuracy')
+    plt.plot(epochs, val_acc, label='Val Accuracy')
+    plt.title('Accuracy Over Epochs')
+    plt.xlabel('Epochs')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    
+    plt.subplot(1, 2, 2)
+    plt.plot(epochs, loss, label='Train Loss')
+    plt.plot(epochs, val_loss, label='Val Loss')
+    plt.title('Loss Over Epochs')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+    
+    plt.tight_layout()
+    plt.show()
 
-plt.subplot(1, 2, 2)
-plt.plot(history.history['loss'], label='train_loss')
-plt.plot(history.history['val_loss'], label='val_loss')
-plt.title('Loss')
-plt.xlabel('Epochs')
-plt.ylabel('Loss')
-plt.legend()
+plot_history(history1, history2)
 
-plt.show()
-
-# Evaluate model
+# Evaluate on Test Data
 test_loss, test_acc = model.evaluate(test_data)
-print(f'Test accuracy: {test_acc}')
+print(f"\nTest Accuracy: {test_acc:.4f}")
+print(f"Test Loss: {test_loss:.4f}")
